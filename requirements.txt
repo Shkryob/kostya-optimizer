@@ -1,0 +1,2 @@
+pvlib==0.10.1
+timezonefinder==6.2.0
