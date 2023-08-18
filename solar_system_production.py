@@ -46,6 +46,10 @@ class SolarSystemProductionService:
             shading_coeff = (100 - surface.shading) / 100
             # dni - Direct Normal Irradiance
             surface_weather['dni'] = surface_weather['dni'].apply(lambda x: x * shading_coeff)
+
+            # comment below two lines to get results as in SAM
+            surface_weather['ghi'] = surface_weather['ghi'].apply(lambda x: x * shading_coeff)  # Global Horizontal Irradiance
+            surface_weather['dhi'] = surface_weather['dhi'].apply(lambda x: x * shading_coeff)  # Diffuse Horizontal Irradiance
             weather_datasets.append(surface_weather)
 
         system = pvsystem.PVSystem(
