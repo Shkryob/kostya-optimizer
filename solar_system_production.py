@@ -8,6 +8,20 @@ from pvlib.modelchain import ModelChain
 
 
 class SolarSystemProductionService:
+    # default pvwatts losses
+    loses = {
+        'soiling': 2,
+        'shading': 3,
+        'snow': 0,
+        'mismatch': 2,
+        'wiring': 2,
+        'connections': 0.5,
+        'lid': 1.5,
+        'nameplate_rating': 1,
+        'age': 0,
+        'availability': 3,
+    }
+
     def __init__(self, address: Address):
         self.address = address
 
@@ -26,10 +40,10 @@ class SolarSystemProductionService:
 
     def get_monthly_production(self, ac_result: pandas.Series) -> dict:
         # weather data is fragmented data so we have to combine by month not byt year, month
-        return ac_result\
-            .groupby([lambda x: x.month])\
-            .sum()\
-            .div(1000)\
+        return ac_result \
+            .groupby([lambda x: x.month]) \
+            .sum() \
+            .div(1000) \
             .to_dict()
 
     def create_inverter_parameters(self) -> dict:
@@ -118,18 +132,7 @@ class SolarSystemProductionService:
             inverter_parameters=inverter_parameters,
             strings_per_inverter=1,
             racking_model='open_rack',
-            losses_parameters={  # default pvwatts losses
-                'soiling': 2,
-                'shading': 3,
-                'snow': 0,
-                'mismatch': 2,
-                'wiring': 2,
-                'connections': 0.5,
-                'lid': 1.5,
-                'nameplate_rating': 1,
-                'age': 0,
-                'availability': 3,
-            },
+            losses_parameters=self.loses,
         )
         system.racking_model = None
 
