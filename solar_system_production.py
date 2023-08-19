@@ -8,35 +8,49 @@ from pvlib.modelchain import ModelChain
 
 
 class SolarSystemProductionService:
-    def get_production(self, address: Address):
-        module_parameters = self.create_module_paramenters(address)
-        total_modules = sum(surface.max_panels for surface in address.surfaces)
-        inverter_parameters = {'pdc0': address.solar_module.capacity * total_modules}
-        location = self.create_location(address)
+    def __init__(self, address: Address):
+        self.address = address
 
-        arrays = self.create_arrays(address, module_parameters)
-        weather_datasets = self.create_wather_datasets(address)
-        system = self.create_system(arrays, inverter_parameters)
-        mc = self.create_model_chain(location, system)
+    def get_production(self):
+        arrays = self.create_arrays()
+        weather_datasets = self.create_weather_datasets()
+        system = self.create_system(arrays)
+        mc = self.create_model_chain(system)
         mc.run_model(weather_datasets)
-        annual_energy = mc.results.ac.sum()
-        annual_energy = annual_energy / 1000  # convert to kWh
+        annual_production = mc.results.ac.sum() / 1000
 
-        #for
-        #mc.results.ac.between_time()
+        return {
+            'annual_production': annual_production,
+            'monthly_production': self.get_monthly_production(mc.results.ac),
+        }
 
-        return annual_energy
+    def get_monthly_production(self, ac_result: pandas.Series) -> dict:
+        # weather data is fragmented data so we have to combine by month not byt year, month
+        return ac_result\
+            .groupby([lambda x: x.month])\
+            .sum()\
+            .div(1000)\
+            .to_dict()
 
-    def create_module_paramenters(self, address: Address) -> dict:
-        module_parameters = {
+    def create_inverter_parameters(self) -> dict:
+        return {
+            # Total DC power limit of the inverter
+            'pdc0': self.address.inverter.production,
+            # (numeric, default 0.96) – Nominal inverter efficiency
+            'eta_inv_nom': self.address.inverter.efficiency,
+        }
+
+    def create_module_paramenters(self) -> dict:
+        return {
             #  nominal DC power output of a solar module under standard test conditions (STC)
-            'pdc0': address.solar_module.capacity,
+            'pdc0': self.address.solar_module.capacity,
             # The temperature coefficient of power. Typically -0.002 to -0.005 per degree C. [1/C]
             'gamma_pdc': -0.004,
         }
-        return module_parameters
 
-    def create_model_chain(self, location: Location, system: pvsystem.PVSystem) -> ModelChain:
+    def create_model_chain(self, system: pvsystem.PVSystem) -> ModelChain:
+        location = self.create_location()
+
         return ModelChain(
             system,
             location,
@@ -45,23 +59,23 @@ class SolarSystemProductionService:
             losses_model='pvwatts',
         )
 
-    def create_location(self, address: Address) -> Location:
-        local_timezone = self.get_local_timezone(address)
+    def create_location(self) -> Location:
+        local_timezone = self.get_local_timezone()
 
         location = Location(
-            address.latitude,
-            address.longitude,
+            self.address.latitude,
+            self.address.longitude,
             # name=name,
             # altitude=altitude,
             tz=local_timezone,
         )
         return location
 
-    def create_wather_datasets(self, address: Address) -> List[pandas.DataFrame]:
+    def create_weather_datasets(self) -> List[pandas.DataFrame]:
         weather_datasets = []
-        basic_weather = iotools.get_pvgis_tmy(address.latitude, address.longitude)[0]
+        basic_weather = iotools.get_pvgis_tmy(self.address.latitude, self.address.longitude)[0]
 
-        for surface in address.surfaces:
+        for surface in self.address.surfaces:
             surface_weather = basic_weather.copy()
             shading_coeff = (100 - surface.shading) / 100
             # dni - Direct Normal Irradiance
@@ -76,11 +90,12 @@ class SolarSystemProductionService:
 
         return weather_datasets
 
-    def create_arrays(self, address: Address, module_parameters: dict) -> List[pvsystem.Array]:
+    def create_arrays(self) -> List[pvsystem.Array]:
         arrays = []
         temperature_model_parameters = temperature.TEMPERATURE_MODEL_PARAMETERS['sapm']['open_rack_glass_glass']
+        module_parameters = self.create_module_paramenters()
 
-        for surface in address.surfaces:
+        for surface in self.address.surfaces:
             mount = pvsystem.FixedMount(
                 surface_tilt=surface.tilt,
                 surface_azimuth=surface.azimuth,
@@ -89,15 +104,19 @@ class SolarSystemProductionService:
                 mount=mount,
                 module_parameters=module_parameters,
                 temperature_model_parameters=temperature_model_parameters,
-                modules_per_string=surface.max_panels,
+                strings=surface.max_panels,
+                modules_per_string=1
             ))
 
         return arrays
 
-    def create_system(self, arrays: List[pvsystem.Array], inverter_parameters: dict) -> pvsystem.PVSystem:
+    def create_system(self, arrays: List[pvsystem.Array]) -> pvsystem.PVSystem:
+        inverter_parameters = self.create_inverter_parameters()
+
         system = pvsystem.PVSystem(
             arrays=arrays,
             inverter_parameters=inverter_parameters,
+            strings_per_inverter=1,
             racking_model='open_rack',
             losses_parameters={  # default pvwatts losses
                 'soiling': 2,
@@ -110,13 +129,13 @@ class SolarSystemProductionService:
                 'nameplate_rating': 1,
                 'age': 0,
                 'availability': 3,
-            }
+            },
         )
         system.racking_model = None
 
         return system
 
-    def get_local_timezone(self, address: Address) -> str:
+    def get_local_timezone(self) -> str:
         tf = TimezoneFinder()
 
-        return tf.timezone_at(lat=address.latitude, lng=address.longitude)
+        return tf.timezone_at(lat=self.address.latitude, lng=self.address.longitude)
